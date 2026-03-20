@@ -1,43 +1,35 @@
-# KUKA LWR4 Modified — Kinematic & Dynamic Control in ROS Noetic
+# KUKA LWR4 Modified — Kinematics & Dynamic Control (ROS Noetic)
 
 <p align="center">
-  <img src="imgs/rviz_viz.jpg" width="700">
+  <img src="imgs/kuka_real.jpg" width="500">
 </p>
 
-Modeling, kinematic analysis, and dynamic control of a **modified KUKA LWR4** robotic arm (8 DOF) for automotive assembly tasks, fully simulated in **ROS Noetic + RViz**.
+Modified version of the KUKA LWR4 (7 DOF) with an added **prismatic joint** between the last revolute joint and the end-effector, giving it **8 degrees of freedom**. The prismatic joint has a range of 0 to 0.08 m.
 
-The original 7-DOF KUKA LWR4 was extended with an additional **prismatic joint** (0–0.08 m range) to increase workspace reach and precision for component fastening operations.
+Everything runs on **ROS Noetic** with visualization in **RViz**. The robot model is defined via URDF/Xacro.
+
+<p align="center">
+  <img src="imgs/robot_model.jpg" width="250">
+  &nbsp;&nbsp;&nbsp;
+  <img src="imgs/rviz_working.jpg" width="350">
+</p>
 
 ---
 
-## Overview
+## What's in this repo
 
-| | |
-|---|---|
-| **Robot** | KUKA LWR4 + prismatic joint (8 DOF) |
-| **Framework** | ROS Noetic, RViz |
-| **Language** | Python 3 |
-| **Libraries** | NumPy, RBDL (Rigid Body Dynamics), rospy |
-| **Modeling** | URDF / Xacro |
-| **Application** | Screw-fastening in automotive assembly |
+- URDF/Xacro description of the modified robot (8 DOF)
+- Forward kinematics (DH parameters)
+- Inverse kinematics (Newton-Raphson, numerical)
+- Kinematic control (Jacobian-based, position control)
+- Dynamics (inertia matrix, Coriolis, gravity via RBDL)
+- Two dynamic controllers:
+  - **Inverse dynamics** (feedback linearization) — settles in ~37s
+  - **PD + gravity compensation** — settles in ~170s
 
 ---
 
-## Robot Model
-
-The modified robot ("KUKO") adds a prismatic joint between the 6th revolute joint and the end-effector, resulting in an 8-DOF serial manipulator with 7 revolute + 1 prismatic joints.
-
-<p align="center">
-  <img src="imgs/robot_model.jpg" width="350">
-  <br>
-  <em>Modified KUKA LWR4 model in RViz — prismatic joint shown in red</em>
-</p>
-
-### Denavit-Hartenberg Parameters
-
-<p align="center">
-  <img src="imgs/dh_table.jpg" width="600">
-</p>
+## DH Parameters
 
 | Joint | d (m) | θ (rad) | a (m) | α (rad) |
 |:-----:|:-----:|:-------:|:-----:|:-------:|
@@ -47,186 +39,169 @@ The modified robot ("KUKO") adds a prismatic joint between the 6th revolute join
 | 4 | 0 | q₄ + π | 0 | π/2 |
 | 5 | 0.40 | q₅ | 0 | π/2 |
 | 6 | 0 | q₆ + π | 0 | π/2 |
-| 7 | q₇ | 0 | 0 | 0 |
+| 7 (prismatic) | q₇ | 0 | 0 | 0 |
 | 8 | 0.10 | q₈ | 0 | π/2 |
 
 ---
 
 ## Forward Kinematics
 
-Forward kinematics computed via homogeneous transformation matrices from DH parameters. Verified against RViz for multiple joint configurations.
+Computed from the DH table above. Reference frames verified in RViz:
 
 <p align="center">
-  <img src="imgs/fk_simulation.jpg" width="700">
-  <br>
-  <em>FK verification — q = [1.57, 1.57, 0, 1.57, 0, 1.57, 0.08, 1.57] rad</em>
+  <img src="imgs/fk_frames.png" width="200">
+  &nbsp;&nbsp;&nbsp;
+  <img src="imgs/fk_test1_rviz.jpg" width="200">
+  &nbsp;&nbsp;&nbsp;
+  <img src="imgs/fk_test2_rviz.jpg" width="200">
 </p>
+
+Example — `q = [0, 0, 0, 0, 0, 0, 0, 0]`:
+
+<p align="center">
+  <img src="imgs/fk_test1_matrix.jpg" width="300">
+</p>
+
+Position: `[0, 0, 1.38]` — the robot is fully extended upward, which matches the sum of link lengths.
 
 ---
 
 ## Inverse Kinematics
 
-Numerical approach using **Newton-Raphson method** — iteratively minimizes the error between the desired end-effector position and the current FK output.
+Numerical solution using Newton-Raphson. The method iterates until the FK output matches the desired position within a tolerance.
+
+For `x_d = [0.5, 0.5, 0.5]` it converges in 42 iterations:
 
 <p align="center">
-  <img src="imgs/ik_simulation.jpg" width="700">
-  <br>
-  <em>IK solution for x_d = [0.5, 0.5, 0.5] m — converged in 42 iterations</em>
+  <img src="imgs/ik_test1_rviz.jpg" width="500">
+</p>
+
+<p align="center">
+  <img src="imgs/ik_test1_result.png" width="500">
 </p>
 
 ---
 
 ## Kinematic Control
 
-Position-only kinematic control using the **analytical Jacobian** and pseudo-inverse with Moore-Penrose regularization to handle singularities. Prismatic joint limits enforced in code.
+Position control using the analytical Jacobian (3×8) and its pseudo-inverse. The prismatic joint (q₇) is clamped in the code since RViz doesn't enforce URDF limits during control.
 
-```
-e = x - x_d
-ė* = -k·e
-q̇ = J⁺ · ė*
-q_k = q_{k-1} + Δt · q̇_k
-```
+The controller uses `ė* = -k·e` with `k = 1`, integrated via Euler method.
+
+Target: `x_d = [0.5, 0.5, 0.5]` m
 
 <p align="center">
-  <img src="imgs/kinematic_control.jpg" width="700">
+  <img src="imgs/kinctrl_rviz.jpg" width="450">
   <br>
-  <em>Joint trajectories — Kinematic control (k = 1)</em>
+  <em>End-effector reaching the target (green marker)</em>
 </p>
+
+Joint trajectories:
 
 <p align="center">
-  <img src="imgs/kinematic_efector.jpg" width="700">
-  <br>
-  <em>End-effector position convergence to [0.5, 0.5, 0.5] m</em>
+  <img src="imgs/kinctrl_joints.jpg" width="700">
 </p>
 
----
+End-effector convergence in X, Y, Z:
 
-## Dynamics
+<p align="center">
+  <img src="imgs/kinctrl_efector_x.jpg" width="320">
+  <img src="imgs/kinctrl_efector_y.jpg" width="320">
+</p>
+<p align="center">
+  <img src="imgs/kinctrl_efector_z.jpg" width="320">
+</p>
 
-Robot dynamics computed using **RBDL** (Rigid Body Dynamics Library) from the URDF model:
-
-- **Inertia matrix** M(q) — via Composite Rigid Body Algorithm
-- **Coriolis vector** C(q, q̇)q̇
-- **Gravity vector** g(q)
-- **Torque**: τ = M(q)q̈ + C(q, q̇)q̇ + g(q)
+X and Z converge well. Y has a small steady-state offset — could be improved with higher gain or a different control strategy.
 
 ---
 
 ## Dynamic Control
 
-Two controllers were implemented and compared:
+Robot dynamics computed with **RBDL** from the URDF: inertia matrix M(q), Coriolis C(q,q̇)q̇, and gravity g(q).
 
-### 1. Inverse Dynamics Control (Feedback Linearization)
+### Inverse Dynamics Controller
+
+Full model compensation:
 
 ```
-u = M(q)(q̈_d + K_d(q̇_d − q̇) + K_p(q_d − q)) + C(q,q̇)q̇ + g(q)
+u = M(q)(q̈_d + Kd(q̇_d − q̇) + Kp(q_d − q)) + C(q,q̇)q̇ + g(q)
 ```
 
-Stabilization time: **~37 seconds**
+Settles in about **37 seconds**:
 
 <p align="center">
-  <img src="imgs/dynamic_inverse.jpg" width="400">
-  <br>
-  <em>Inverse dynamics — end-effector convergence (X, Y, Z)</em>
+  <img src="imgs/dyn_inv_x.jpg" width="320">
+  <img src="imgs/dyn_inv_y.jpg" width="320">
+</p>
+<p align="center">
+  <img src="imgs/dyn_inv_z.jpg" width="320">
 </p>
 
-### 2. PD + Gravity Compensation
+### PD + Gravity Compensation
+
+Simpler controller — only compensates gravity:
 
 ```
-u = g(q) + K_p(q_d − q) − K_d · q̇
+u = g(q) + Kp(q_d − q) − Kd·q̇
 ```
 
-Stabilization time: **~170 seconds**
+Settles in about **170 seconds** (much slower, but simpler to implement):
 
 <p align="center">
-  <img src="imgs/dynamic_pd.jpg" width="400">
-  <br>
-  <em>PD + gravity compensation — end-effector convergence (X, Y, Z)</em>
+  <img src="imgs/dyn_pd_x.jpg" width="320">
+  <img src="imgs/dyn_pd_y.jpg" width="320">
+</p>
+<p align="center">
+  <img src="imgs/dyn_pd_z.jpg" width="320">
 </p>
 
-> **Result:** Inverse dynamics control converges **4.6x faster** than PD + gravity compensation due to full dynamic model compensation.
+The inverse dynamics controller is roughly **4.5x faster** since it compensates the full nonlinear dynamics, not just gravity.
 
 ---
 
-## Tech Stack
+## How to run
 
-- **ROS Noetic** — middleware, message passing, joint state publisher
-- **RViz** — 3D visualization and simulation
-- **URDF / Xacro** — robot description files
-- **Python 3** — kinematics, control loops
-- **RBDL** — rigid body dynamics computation
-- **NumPy** — matrix operations, Jacobian, pseudo-inverse
-- **Matplotlib** — result plotting
-
----
-
-## How to Run
+Requirements: ROS Noetic, Python 3, RBDL, NumPy
 
 ```bash
-# Clone the repository
+# Clone
 git clone https://github.com/josue99999/CONTROL-LWR-4-ROS-NOETIC.git
 
-# Build the workspace
+# Build
 cd ~/catkin_ws && catkin_make
 
-# Launch the robot in RViz
+# Launch robot in RViz
 roslaunch kuka_lbr_iiwa_support display.launch
 
-# Run forward kinematics test
+# Forward kinematics test
 rosrun kuka_lbr_iiwa_support test_fkine
 
-# Run inverse kinematics
+# Inverse kinematics
 rosrun kuka_lbr_iiwa_support test_ikine_PROYECTO
 
-# Run kinematic control
+# Kinematic control
 rosrun kuka_lbr_iiwa_support control_cinematico
 
-# Run dynamic control (inverse dynamics)
+# Dynamic control — inverse dynamics
 rosrun kuka_lbr_iiwa_support control_dinamico_inverso
 
-# Run PD + gravity compensation
+# Dynamic control — PD + gravity
 rosrun kuka_lbr_iiwa_support control_pd_gravedad
 ```
 
 ---
 
-## Project Structure
+## Notes
 
-```
-├── urdf/                    # URDF and Xacro robot description
-├── meshes/                  # 3D mesh files for each link
-├── launch/                  # ROS launch files
-├── scripts/
-│   ├── test_fkine           # Forward kinematics verification
-│   ├── test_ikine_PROYECTO  # Inverse kinematics (Newton-Raphson)
-│   ├── control_cinematico   # Kinematic control (Jacobian-based)
-│   ├── control_dinamico_inverso  # Inverse dynamics controller
-│   └── control_pd_gravedad  # PD + gravity compensation
-├── config/                  # RViz configuration
-└── README.md
-```
-
----
-
-## Key Results
-
-| Metric | Kinematic Control | Inverse Dynamics | PD + Gravity |
-|--------|:-:|:-:|:-:|
-| Settling time | ~40s | ~37s | ~170s |
-| Steady-state error | Low (X,Z) / Moderate (Y) | Low | Low |
-| Overshoot | Minimal | Moderate | High |
-| Model complexity | Jacobian only | Full dynamics | Gravity only |
+- The prismatic joint (q₇) starts at its max distance (0.08 m). In dynamic control, if the desired position exceeds this limit, q₇ stays at its physical boundary — this is expected behavior, not a bug.
+- Kinematic control only handles position (not orientation) to keep things simpler.
+- The Jacobian uses Moore-Penrose pseudo-inverse with a damping factor (λ = 0.01) near singularities.
 
 ---
 
 ## References
 
-1. Zaplana, I. (2017). *Análisis Cinemático de Robots Manipuladores Redundantes*
-2. Corrales, J. (2016). *Manipulation and path planning for KUKA (LWR/LBR 4+) robot*
-3. KUKA Robotics — [LBR iiwa Documentation](https://www.kuka.com/en-us/products/robotics-systems/industrial-robots/lbr-iiwa)
-
----
-
-## Author
-
-**Josué Abad Chate** — Robotics Engineering, UTEC (2023)
+- Zaplana, I. (2017). *Análisis Cinemático de Robots Manipuladores Redundantes*
+- Corrales, J. (2016). *Manipulation and path planning for KUKA (LWR/LBR 4+) robot*
+- KUKA Robotics — [LBR iiwa](https://www.kuka.com/en-us/products/robotics-systems/industrial-robots/lbr-iiwa)
